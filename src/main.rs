@@ -13,12 +13,11 @@ mod user_lister;
 
 fn main() {
     dotenv().ok();
+    let lister = Arc::new(UserLister::new(Arc::new(Discord::new())));
     let server = TcpListener::bind("127.0.0.1:3000").unwrap();
     for stream in server.incoming() {
+        let lister = lister.clone();
         spawn(move || {
-            let lister = UserLister {
-                discord: Arc::new(Discord::new()),
-            };
             let callback = |_: &Request, response: Response| Ok(response);
             let mut websocket = accept_hdr(stream.unwrap(), callback).unwrap();
             while let Ok(msg) = websocket.read_message() {
