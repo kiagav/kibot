@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::{Mutex, MutexGuard};
 
 use crate::discord::DynDiscordAPI;
 use serde::Deserialize;
@@ -30,34 +31,37 @@ impl UserLister {
             discord,
         }
     }
-    pub fn json_message(&self, json: &str) {
+    pub async fn json_message(&self, json: &str) {
         let msg: Msg = serde_json::from_str(json).unwrap();
-        let mut users = self.users.lock().unwrap();
+        let mut users = self.users.lock().await;
         match msg.msg_type {
             MsgType::Joined => {
                 if !users.contains(&msg.username) {
                     users.push(msg.username);
                 }
-                self.print_users_in_session(users);
+                self.print_users_in_session(users).await;
             }
             MsgType::Left => {
                 users.retain(|name| *name != msg.username);
-                self.print_users_in_session(users);
+                self.print_users_in_session(users).await;
             }
         }
     }
 
-    fn print_users_in_session(&self, users: std::sync::MutexGuard<'_, Vec<String>>) {
+    async fn print_users_in_session(&self, users: MutexGuard<'_, Vec<String>>) {
         let mut message = "No users in session.".into();
         if !users.is_empty() {
             message = format!("Users in session: {}", users.join(", "));
         }
-        self.discord.write_message(message.as_str())
+        println!("{message}");
+        self.discord.write_message(message.as_str()).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use serenity::async_trait;
+
     use crate::discord::DiscordAPI;
 
     use super::*;
@@ -67,35 +71,38 @@ mod tests {
         messages: Arc<Mutex<Vec<String>>>,
     }
 
+    #[async_trait]
     impl DiscordAPI for MemoryDiscord {
-        fn write_message(&self, message: &str) {
+        async fn write_message(&self, message: &str) {
             self.messages.lock().unwrap().push(message.into());
         }
     }
 
-    #[test]
-    fn test_joined() {
-        assert_messages(vec![("JOINED", "User")], vec!["Users in session: User"]);
+    #[tokio::test]
+    async fn test_joined() {
+        assert_messages(vec![("JOINED", "User")], vec!["Users in session: User"]).await;
     }
 
-    #[test]
-    fn test_duplicates_removed() {
+    #[tokio::test]
+    async fn test_duplicates_removed() {
         assert_messages(
             vec![("JOINED", "User"), ("JOINED", "User")],
             vec!["Users in session: User", "Users in session: User"],
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_consequent_joined() {
+    #[tokio::test]
+    async fn test_consequent_joined() {
         assert_messages(
             vec![("JOINED", "User"), ("JOINED", "Another")],
             vec!["Users in session: User", "Users in session: User, Another"],
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_twojoin_oneleaving() {
+    #[tokio::test]
+    async fn test_twojoin_oneleaving() {
         assert_messages(
             vec![("JOINED", "User"), ("JOINED", "Another"), ("LEFT", "User")],
             vec![
@@ -103,18 +110,20 @@ mod tests {
                 "Users in session: User, Another",
                 "Users in session: Another",
             ],
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_no_user_left() {
+    #[tokio::test]
+    async fn test_no_user_left() {
         assert_messages(
             vec![("JOINED", "User"), ("LEFT", "User")],
             vec!["Users in session: User", "No users in session."],
-        );
+        )
+        .await;
     }
 
-    fn assert_messages(inputs: Vec<(&str, &str)>, outputs: Vec<&str>) {
+    async fn assert_messages(inputs: Vec<(&str, &str)>, outputs: Vec<&str>) {
         let inputs: Vec<String> = inputs
             .iter()
             .map(|(typ, msg)| {
@@ -128,10 +137,10 @@ mod tests {
                 )
             })
             .collect();
-        assert_payload(inputs, outputs);
+        assert_payload(inputs, outputs).await;
     }
 
-    fn assert_payload(inputs: Vec<String>, outputs: Vec<&str>) {
+    async fn assert_payload(inputs: Vec<String>, outputs: Vec<&str>) {
         let messages = Arc::new(Mutex::new(Vec::new()));
         let mock = Arc::new(MemoryDiscord {
             messages: messages.clone(),
@@ -139,7 +148,7 @@ mod tests {
         let lister = UserLister::new(mock);
 
         for msg in inputs {
-            lister.json_message(msg.as_str());
+            lister.json_message(msg.as_str()).await;
         }
 
         for (idx, msg) in outputs.iter().enumerate() {
