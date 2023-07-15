@@ -13,7 +13,7 @@ mod user_lister;
 #[tokio::main]
 async fn main() {
     let lister = Arc::new(UserLister::new(Arc::new(Discord::new())));
-    let server = TcpListener::bind("127.0.0.1:3000").unwrap();
+    let server = TcpListener::bind("127.0.0.1:8080").unwrap();
     for stream in server.incoming() {
         let callback = |_: &Request, response: Response| Ok(response);
         let mut websocket = accept_hdr(stream.unwrap(), callback).unwrap();

@@ -9,6 +9,7 @@ use serde::Deserialize;
 enum MsgType {
     Joined,
     Left,
+    ResetList,
 }
 
 #[derive(Deserialize)]
@@ -45,6 +46,7 @@ impl UserLister {
                 users.retain(|name| *name != msg.username);
                 self.print_users_in_session(users).await;
             }
+            MsgType::ResetList => self.discord.clear_all_messages().await,
         }
     }
 
@@ -69,12 +71,17 @@ mod tests {
 
     struct MemoryDiscord {
         messages: Arc<Mutex<Vec<String>>>,
+        cleared: Arc<Mutex<bool>>,
     }
 
     #[async_trait]
     impl DiscordAPI for MemoryDiscord {
         async fn write_message(&self, message: &str) {
             self.messages.lock().unwrap().push(message.into());
+        }
+
+        async fn clear_all_messages(&self) {
+            *self.cleared.lock().unwrap() = true;
         }
     }
 
@@ -123,7 +130,21 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
+    async fn test_reset_list() {
+        assert_messages_cleared(
+            vec![("JOINED", "User"), ("RESET_LIST", "")],
+            vec!["Users in session: User"],
+            true,
+        )
+        .await;
+    }
+
     async fn assert_messages(inputs: Vec<(&str, &str)>, outputs: Vec<&str>) {
+        assert_messages_cleared(inputs, outputs, false).await;
+    }
+
+    async fn assert_messages_cleared(inputs: Vec<(&str, &str)>, outputs: Vec<&str>, cleared: bool) {
         let inputs: Vec<String> = inputs
             .iter()
             .map(|(typ, msg)| {
@@ -137,13 +158,15 @@ mod tests {
                 )
             })
             .collect();
-        assert_payload(inputs, outputs).await;
+        assert_payload(inputs, outputs, cleared).await;
     }
 
-    async fn assert_payload(inputs: Vec<String>, outputs: Vec<&str>) {
+    async fn assert_payload(inputs: Vec<String>, outputs: Vec<&str>, cleared: bool) {
         let messages = Arc::new(Mutex::new(Vec::new()));
+        let mockcleared = Arc::new(Mutex::new(false));
         let mock = Arc::new(MemoryDiscord {
             messages: messages.clone(),
+            cleared: mockcleared.clone(),
         });
         let lister = UserLister::new(mock);
 
@@ -151,8 +174,11 @@ mod tests {
             lister.json_message(msg.as_str()).await;
         }
 
+        let messages = messages.lock().unwrap();
+        assert_eq!(outputs.len(), messages.len());
         for (idx, msg) in outputs.iter().enumerate() {
-            assert_eq!(&messages.lock().unwrap()[idx].as_str(), msg);
+            assert_eq!(&messages[idx].as_str(), msg);
         }
+        assert_eq!(cleared, mockcleared.lock().unwrap().to_owned());
     }
 }
