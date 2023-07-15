@@ -17,7 +17,7 @@ struct Msg {
     #[serde(rename = "type")]
     msg_type: MsgType,
     #[serde(rename = "userName")]
-    username: String,
+    username: Option<String>,
 }
 
 pub struct UserLister {
@@ -37,14 +37,18 @@ impl UserLister {
         let mut users = self.users.lock().await;
         match msg.msg_type {
             MsgType::Joined => {
-                if !users.contains(&msg.username) {
-                    users.push(msg.username);
+                if let Some(username) = msg.username {
+                    if !users.contains(&username) {
+                        users.push(username);
+                    }
+                    self.print_users_in_session(users).await;
                 }
-                self.print_users_in_session(users).await;
             }
             MsgType::Left => {
-                users.retain(|name| *name != msg.username);
-                self.print_users_in_session(users).await;
+                if let Some(username) = msg.username {
+                    users.retain(|name| *name != username);
+                    self.print_users_in_session(users).await;
+                }
             }
             MsgType::ResetList => self.discord.clear_all_messages().await,
         }
@@ -87,13 +91,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_joined() {
-        assert_messages(vec![("JOINED", "User")], vec!["Users in session: User"]).await;
+        assert_messages(
+            vec![("JOINED", Some("User"))],
+            vec!["Users in session: User"],
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn test_duplicates_removed() {
         assert_messages(
-            vec![("JOINED", "User"), ("JOINED", "User")],
+            vec![("JOINED", Some("User")), ("JOINED", Some("User"))],
             vec!["Users in session: User", "Users in session: User"],
         )
         .await;
@@ -102,7 +110,7 @@ mod tests {
     #[tokio::test]
     async fn test_consequent_joined() {
         assert_messages(
-            vec![("JOINED", "User"), ("JOINED", "Another")],
+            vec![("JOINED", Some("User")), ("JOINED", Some("Another"))],
             vec!["Users in session: User", "Users in session: User, Another"],
         )
         .await;
@@ -111,7 +119,11 @@ mod tests {
     #[tokio::test]
     async fn test_twojoin_oneleaving() {
         assert_messages(
-            vec![("JOINED", "User"), ("JOINED", "Another"), ("LEFT", "User")],
+            vec![
+                ("JOINED", Some("User")),
+                ("JOINED", Some("Another")),
+                ("LEFT", Some("User")),
+            ],
             vec![
                 "Users in session: User",
                 "Users in session: User, Another",
@@ -124,7 +136,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_user_left() {
         assert_messages(
-            vec![("JOINED", "User"), ("LEFT", "User")],
+            vec![("JOINED", Some("User")), ("LEFT", Some("User"))],
             vec!["Users in session: User", "No users in session."],
         )
         .await;
@@ -133,29 +145,40 @@ mod tests {
     #[tokio::test]
     async fn test_reset_list() {
         assert_messages_cleared(
-            vec![("JOINED", "User"), ("RESET_LIST", "")],
+            vec![("JOINED", Some("User")), ("RESET_LIST", None)],
             vec!["Users in session: User"],
             true,
         )
         .await;
     }
 
-    async fn assert_messages(inputs: Vec<(&str, &str)>, outputs: Vec<&str>) {
+    async fn assert_messages(inputs: Vec<(&str, Option<&str>)>, outputs: Vec<&str>) {
         assert_messages_cleared(inputs, outputs, false).await;
     }
 
-    async fn assert_messages_cleared(inputs: Vec<(&str, &str)>, outputs: Vec<&str>, cleared: bool) {
+    async fn assert_messages_cleared(
+        inputs: Vec<(&str, Option<&str>)>,
+        outputs: Vec<&str>,
+        cleared: bool,
+    ) {
         let inputs: Vec<String> = inputs
             .iter()
-            .map(|(typ, msg)| {
-                format!(
+            .map(|(typ, msg)| match msg {
+                Some(msg) => format!(
                     r#"
-            {{
-                "type": "{typ}",
-                "userName": "{msg}"
-            }}
-            "#
-                )
+                        {{
+                            "type": "{typ}",
+                            "userName": "{msg}"
+                        }}
+                        "#
+                ),
+                None => format!(
+                    r#"
+                        {{
+                            "type": "{typ}"
+                        }}
+                        "#
+                ),
             })
             .collect();
         assert_payload(inputs, outputs, cleared).await;
