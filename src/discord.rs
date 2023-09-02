@@ -63,6 +63,7 @@ impl DiscordAPI for Discord {
 
     async fn clear_all_messages(&self) {
         let ids = self.sent_message_ids.lock().unwrap().clone();
+        self.sent_message_ids.lock().unwrap().clear();
         for id in ids.iter() {
             let _ = self.channel.delete_message(self.client.clone(), id).await;
         }
