@@ -17,7 +17,7 @@ async fn main() {
     for stream in server.incoming() {
         let callback = |_: &Request, response: Response| Ok(response);
         let mut websocket = accept_hdr(stream.unwrap(), callback).unwrap();
-        while let Ok(msg) = websocket.read_message() {
+        while let Ok(msg) = websocket.read() {
             if msg.is_text() {
                 lister.json_message(&msg.to_string()).await;
             }
